@@ -1,0 +1,15 @@
+# 依赖文件夹
+node_modules/
+backend/node_modules/
+
+# 环境变量文件 (保护你的数据库密码)
+.env
+.env.local
+
+# Cocos Creator 构建产物 (防止上传编译后的几百兆文件)
+Lobby_Module/build/
+Lobby_Module/temp/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db

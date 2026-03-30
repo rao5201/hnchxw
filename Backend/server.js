@@ -6,6 +6,17 @@ const twilio = require('twilio');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+// 导入管理员认证模块
+const {
+    adminLogin,
+    adminLogout,
+    changePassword,
+    createAdmin,
+    getAdminList,
+    authMiddleware,
+    requirePermission
+} = require('./admin-auth');
+
 // 初始化Twilio (仅在配置了有效凭证时)
 let twilioClient = null;
 try {
@@ -564,7 +575,206 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({ message: "请使用 /api/auth/register 接口进行统一登录/注册" });
 });
 
-// --- 其他业务接口 ---
+// ==================== 管理员接口 ====================
+
+// --- 管理员登录 ---
+app.post('/api/admin/login', async (req, res) => {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: '用户名和密码不能为空' });
+    }
+    
+    const result = await adminLogin(username, password);
+    res.status(result.success ? 200 : 401).json(result);
+});
+
+// --- 管理员登出 ---
+app.post('/api/admin/logout', authMiddleware, (req, res) => {
+    const result = adminLogout(req.token);
+    res.json(result);
+});
+
+// --- 获取当前管理员信息 ---
+app.get('/api/admin/profile', authMiddleware, (req, res) => {
+    res.json({
+        success: true,
+        data: req.admin
+    });
+});
+
+// --- 修改密码 ---
+app.post('/api/admin/change-password', authMiddleware, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    
+    if (!oldPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: '原密码和新密码不能为空' });
+    }
+    
+    const result = await changePassword(req.admin.id, oldPassword, newPassword);
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+// --- 获取管理员列表（仅超级管理员） ---
+app.get('/api/admin/list', authMiddleware, (req, res) => {
+    const result = getAdminList(req.token);
+    res.status(result.success ? 200 : 403).json(result);
+});
+
+// --- 创建新管理员（仅超级管理员） ---
+app.post('/api/admin/create', authMiddleware, async (req, res) => {
+    const { username, password, role, permissions } = req.body;
+    
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: '用户名和密码不能为空' });
+    }
+    
+    const result = await createAdmin(req.token, {
+        username,
+        password,
+        role: role || 'admin',
+        permissions: permissions || ['logs_view']
+    });
+    
+    res.status(result.success ? 201 : 403).json(result);
+});
+
+// --- 管理员仪表盘数据 ---
+app.get('/api/admin/dashboard', authMiddleware, requirePermission('system_settings'), async (req, res) => {
+    try {
+        // 获取数据库连接状态
+        const dbStatus = {
+            cockroachDB: !!cockroachDB,
+            tidbCloudDB: !!tidbCloudDB,
+            neonDB: !!neonDB,
+            railwayDB: !!railwayDB
+        };
+        
+        // 获取系统统计信息（示例数据）
+        const stats = {
+            totalUsers: 0,  // 可以从数据库查询
+            activeUsers: 0,
+            todayLogins: 0,
+            systemUptime: process.uptime()
+        };
+        
+        res.json({
+            success: true,
+            data: {
+                dbStatus,
+                stats,
+                admin: req.admin
+            }
+        });
+    } catch (error) {
+        console.error('获取仪表盘数据失败:', error);
+        res.status(500).json({ success: false, message: '获取数据失败' });
+    }
+});
+
+// --- 系统日志查看（需要权限） ---
+app.get('/api/admin/logs', authMiddleware, requirePermission('logs_view'), (req, res) => {
+    // 这里可以实现日志查看功能
+    res.json({
+        success: true,
+        message: '日志功能开发中...',
+        data: []
+    });
+});
+
+// --- 数据库管理（需要权限） ---
+app.get('/api/admin/database/status', authMiddleware, requirePermission('database_management'), async (req, res) => {
+    try {
+        const status = {
+            cockroachDB: { connected: false, latency: null },
+            tidbCloudDB: { connected: false, latency: null },
+            neonDB: { connected: false, latency: null },
+            railwayDB: { connected: false, latency: null }
+        };
+        
+        // 测试CockroachDB连接
+        if (cockroachDB) {
+            try {
+                const start = Date.now();
+                await cockroachDB.query('SELECT 1');
+                status.cockroachDB = { connected: true, latency: Date.now() - start };
+            } catch (e) {
+                status.cockroachDB = { connected: false, error: e.message };
+            }
+        }
+        
+        // 测试TiDB Cloud连接
+        if (tidbCloudDB) {
+            try {
+                const start = Date.now();
+                await tidbCloudDB.execute('SELECT 1');
+                status.tidbCloudDB = { connected: true, latency: Date.now() - start };
+            } catch (e) {
+                status.tidbCloudDB = { connected: false, error: e.message };
+            }
+        }
+        
+        // 测试Neon连接
+        if (neonDB) {
+            try {
+                const start = Date.now();
+                await neonDB.query('SELECT 1');
+                status.neonDB = { connected: true, latency: Date.now() - start };
+            } catch (e) {
+                status.neonDB = { connected: false, error: e.message };
+            }
+        }
+        
+        // 测试Railway连接
+        if (railwayDB) {
+            try {
+                const start = Date.now();
+                await railwayDB.query('SELECT 1');
+                status.railwayDB = { connected: true, latency: Date.now() - start };
+            } catch (e) {
+                status.railwayDB = { connected: false, error: e.message };
+            }
+        }
+        
+        res.json({ success: true, data: status });
+    } catch (error) {
+        console.error('获取数据库状态失败:', error);
+        res.status(500).json({ success: false, message: '获取数据库状态失败' });
+    }
+});
+
+// --- 用户管理（需要权限） ---
+app.get('/api/admin/users', authMiddleware, requirePermission('user_management'), async (req, res) => {
+    try {
+        // 从CockroachDB查询用户列表
+        const query = 'SELECT id, username, phone, email, created_at, last_login FROM users ORDER BY created_at DESC LIMIT 100';
+        const result = await db.instantQuery(query);
+        
+        res.json({
+            success: true,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('获取用户列表失败:', error);
+        res.status(500).json({ success: false, message: '获取用户列表失败' });
+    }
+});
+
+// --- 系统设置（需要权限） ---
+app.get('/api/admin/settings', authMiddleware, requirePermission('system_settings'), (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            jwtExpiry: '24h',
+            maxLoginAttempts: 5,
+            lockoutDuration: '30m',
+            require2FA: false
+        }
+    });
+});
+
+// ==================== 其他业务接口 ====================
+
 app.get('/api/shop/list', (req, res) => {
     res.json({ message: "电商接口开发中...", data: [] });
 });
@@ -573,4 +783,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 茶海虾王后端服务已启动: http://localhost:${PORT}`);
     console.log(`🔗 接口文档: POST /api/auth/register`);
+    console.log(`🔐 管理员接口: POST /api/admin/login`);
 });

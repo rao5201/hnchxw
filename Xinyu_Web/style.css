@@ -218,7 +218,42 @@ body {
   max-width: 340px;
   display: flex;
   flex-direction: column;
+  gap: 16px;
+}
+
+/* 登录方式切换 */
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.auth-tab.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.auth-panel {
+  display: none;
+  flex-direction: column;
   gap: 12px;
+}
+
+.auth-panel.active {
+  display: flex;
 }
 
 .input-group { position: relative; }
@@ -246,6 +281,79 @@ body {
   transform: translateY(-50%);
   font-size: 0.72rem;
   color: var(--text-muted);
+}
+
+/* 验证码按钮 */
+.btn-code {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.btn-code:hover {
+  background: var(--accent-light);
+}
+
+.btn-code:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 社交登录按钮 */
+.social-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-social {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.btn-social:hover {
+  border-color: var(--accent);
+  background: rgba(108, 92, 231, 0.1);
+}
+
+.social-icon {
+  font-size: 1.2rem;
+}
+
+.social-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 8px;
+}
+
+.link {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--accent);
 }
 
 .guest-hint { font-size: 0.8rem; opacity: 0.7; }

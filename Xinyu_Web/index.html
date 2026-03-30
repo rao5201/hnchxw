@@ -32,20 +32,71 @@
         <div class="welcome-divider">
           <span class="divider-leaf">🌿</span>
         </div>
-        <form id="welcome-form" class="welcome-form">
-          <div class="input-group">
-            <input type="text" id="username-input" placeholder="输入你的名字，开启心灵之旅" maxlength="20" autocomplete="off">
-            <span class="input-hint">最多20个字符</span>
+        <div id="welcome-form" class="welcome-form">
+          <!-- 登录方式选择 -->
+          <div class="auth-tabs">
+            <button class="auth-tab active" data-type="phone">手机号登录</button>
+            <button class="auth-tab" data-type="email">邮箱登录</button>
+            <button class="auth-tab" data-type="social">社交登录</button>
           </div>
-          <button type="submit" class="btn btn-primary btn-lg" id="btn-enter">
-            <span>进入茶室</span>
-            <svg class="btn-arrow" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
-          </button>
+          
+          <!-- 手机号登录 -->
+          <div class="auth-panel active" data-type="phone">
+            <div class="input-group">
+              <input type="tel" id="phone-input" placeholder="请输入手机号" maxlength="11" autocomplete="off">
+              <span class="input-hint">11位手机号</span>
+            </div>
+            <div class="input-group">
+              <input type="text" id="code-input" placeholder="请输入验证码" maxlength="6" autocomplete="off">
+              <button class="btn-code" id="btn-send-code">获取验证码</button>
+            </div>
+            <button type="button" class="btn btn-primary btn-lg" id="btn-phone-login">
+              <span>登录/注册</span>
+              <svg class="btn-arrow" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+            </button>
+          </div>
+          
+          <!-- 邮箱登录 -->
+          <div class="auth-panel" data-type="email">
+            <div class="input-group">
+              <input type="email" id="email-input" placeholder="请输入邮箱" autocomplete="off">
+              <span class="input-hint">有效的邮箱地址</span>
+            </div>
+            <div class="input-group">
+              <input type="text" id="email-code-input" placeholder="请输入验证码" maxlength="6" autocomplete="off">
+              <button class="btn-code" id="btn-send-email-code">获取验证码</button>
+            </div>
+            <button type="button" class="btn btn-primary btn-lg" id="btn-email-login">
+              <span>登录/注册</span>
+              <svg class="btn-arrow" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+            </button>
+          </div>
+          
+          <!-- 社交登录 -->
+          <div class="auth-panel" data-type="social">
+            <div class="social-buttons">
+              <button class="btn-social" data-platform="wechat">
+                <span class="social-icon">💬</span>
+                <span>微信登录</span>
+              </button>
+              <button class="btn-social" data-platform="alipay">
+                <span class="social-icon">💳</span>
+                <span>支付宝登录</span>
+              </button>
+              <button class="btn-social" data-platform="douyin">
+                <span class="social-icon">🎵</span>
+                <span>抖音登录</span>
+              </button>
+            </div>
+            <p class="social-hint">登录即表示同意<a href="#" class="link">用户协议</a>和<a href="#" class="link">隐私政策</a></p>
+          </div>
+          
+          <!-- 访客模式 -->
           <button type="button" class="btn btn-ghost" id="btn-guest">
             <span>随缘品茶</span>
             <span class="guest-hint">（访客模式）</span>
           </button>
-        </form>
+        </div>
         <p class="welcome-footer">一杯茶的时间，与心灵对话</p>
       </div>
     </section>

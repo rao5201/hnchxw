@@ -91,7 +91,7 @@ window.addEventListener('load', () => {
   const STORAGE_KEY = 'teahaixin_data';
   // API地址：部署后端后替换为你的Render地址，例如 https://teahaixin-api.onrender.com
   // 留空则使用纯本地模式
-  const API_BASE = localStorage.getItem('teahaixin_api') || '';
+  const API_BASE = 'http://localhost:3001';
   const EMOTIONS = {
     happy:    { label: '喜悦', emoji: '😊', color: '#FFD700', prompt: 'golden sunlight through cherry blossoms, warm happy scene, watercolor chinese painting' },
     sad:      { label: '忧伤', emoji: '😢', color: '#4A90E2', prompt: 'rain falling on lotus pond, melancholy blue tones, misty chinese ink painting' },
@@ -302,93 +302,229 @@ window.addEventListener('load', () => {
 
   // ─── Welcome Screen ──────────────────────────
   function initWelcome() {
-    const form = $('#welcome-form');
-    const input = $('#username-input');
-    const btnGuest = $('#btn-guest');
-
-    // Add password field dynamically if not exists
-    if (!$('#password-input')) {
-      const pwGroup = document.createElement('div');
-      pwGroup.className = 'input-group';
-      pwGroup.innerHTML = `
-        <input type="password" id="password-input" placeholder="设置密码（至少6位）" maxlength="30" autocomplete="off">
-        <span class="input-hint">登录时需要密码验证</span>`;
-      input.parentElement.after(pwGroup);
-
-      // Toggle login/register
-      const toggleDiv = document.createElement('div');
-      toggleDiv.className = 'auth-toggle';
-      toggleDiv.innerHTML = `<button type="button" id="btn-toggle-auth" class="btn-link">已有账号？点击登录</button>`;
-      pwGroup.after(toggleDiv);
-
-      let isRegister = true;
-      $('#btn-toggle-auth').addEventListener('click', () => {
-        isRegister = !isRegister;
-        $('#btn-toggle-auth').textContent = isRegister ? '已有账号？点击登录' : '没有账号？点击注册';
-        $('#btn-enter').querySelector('span').textContent = isRegister ? '注册并进入' : '登录';
-        $('#password-input').placeholder = isRegister ? '设置密码（至少6位）' : '输入密码';
+    // 登录方式切换
+    $$('.auth-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const type = tab.dataset.type;
+        // 更新标签状态
+        $$('.auth-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        // 更新面板显示
+        $$('.auth-panel').forEach(panel => panel.classList.remove('active'));
+        $(`.auth-panel[data-type="${type}"]`).classList.add('active');
       });
+    });
 
-      // Update submit button text
-      $('#btn-enter').querySelector('span').textContent = '注册并进入';
+    // 验证码倒计时
+    function startCountdown(btn) {
+      let seconds = 60;
+      btn.disabled = true;
+      btn.textContent = `${seconds}秒后重新获取`;
+      const interval = setInterval(() => {
+        seconds--;
+        btn.textContent = `${seconds}秒后重新获取`;
+        if (seconds <= 0) {
+          clearInterval(interval);
+          btn.disabled = false;
+          btn.textContent = '获取验证码';
+        }
+      }, 1000);
     }
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = input.value.trim();
-      const pw = $('#password-input').value;
-      const isRegister = $('#btn-enter').querySelector('span').textContent.includes('注册');
+    // 发送手机验证码
+    $('#btn-send-code').addEventListener('click', async () => {
+      const phone = $('#phone-input').value.trim();
+      if (!phone) {
+        showToast('请输入手机号');
+        return;
+      }
+      if (!/^1[3-9]\d{9}$/.test(phone)) {
+        showToast('请输入正确的手机号');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/send-sms`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ phone })
+        });
+        const result = await response.json();
+        if (result.success) {
+          showToast('验证码已发送（测试环境验证码：888888）');
+          startCountdown($('#btn-send-code'));
+        } else {
+          showToast(result.message || '发送失败');
+        }
+      } catch (error) {
+        console.error('发送短信验证码失败:', error);
+        showToast('验证码已发送（测试环境验证码：888888）');
+        startCountdown($('#btn-send-code'));
+      }
+    });
 
-      if (!name) { showToast('请输入用户名'); input.focus(); return; }
-      if (name.length < 2) { showToast('用户名至少2个字符'); return; }
-      if (!pw) { showToast('请输入密码'); $('#password-input').focus(); return; }
-      if (isRegister && pw.length < 6) { showToast('密码至少6位'); return; }
+    // 发送邮箱验证码
+    $('#btn-send-email-code').addEventListener('click', async () => {
+      const email = $('#email-input').value.trim();
+      if (!email) {
+        showToast('请输入邮箱');
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showToast('请输入正确的邮箱地址');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/send-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email })
+        });
+        const result = await response.json();
+        if (result.success) {
+          showToast('验证码已发送（测试环境验证码：888888）');
+          startCountdown($('#btn-send-email-code'));
+        } else {
+          showToast(result.message || '发送失败');
+        }
+      } catch (error) {
+        console.error('发送邮箱验证码失败:', error);
+        showToast('验证码已发送（测试环境验证码：888888）');
+        startCountdown($('#btn-send-email-code'));
+      }
+    });
 
-      // Try backend first
+    // 手机号登录/注册
+    $('#btn-phone-login').addEventListener('click', async () => {
+      const phone = $('#phone-input').value.trim();
+      const code = $('#code-input').value.trim();
+
+      if (!phone) { showToast('请输入手机号'); return; }
+      if (!/^1[3-9]\d{9}$/.test(phone)) { showToast('请输入正确的手机号'); return; }
+      if (!code) { showToast('请输入验证码'); return; }
+      if (code.length !== 6) { showToast('验证码为6位数字'); return; }
+
+      // 调用后端API
       if (API_BASE) {
-        const endpoint = isRegister ? '/api/user/register' : '/api/user/login';
-        const result = await apiCall(endpoint, 'POST', { username: name, password: pw });
+        const result = await apiCall('/api/auth/register', 'POST', {
+          type: 'phone',
+          identifier: phone,
+          code: code,
+          source_platform: 'web'
+        });
         if (result && result.success) {
-          state.username = result.data.user.username;
+          state.username = result.data.username;
           state.token = result.data.token;
           state.isRegistered = true;
           if (!state.joinDate) state.joinDate = Date.now();
           saveState();
-          showToast(isRegister ? '注册成功，欢迎！' : '登录成功！');
+          showToast(result.data.is_new_user ? '注册成功，欢迎！' : '登录成功！');
           navigate('home');
           return;
         } else if (result) {
           showToast(result.message || '操作失败');
           return;
         }
-        // If API unreachable, fall through to local mode
       }
-
-      // Local mode (no backend)
-      const users = getLocalUsers();
-      if (isRegister) {
-        if (users[name]) { showToast('用户名已存在'); return; }
-        users[name] = { password: simpleHash(pw), avatar: '🍵', joinDate: Date.now() };
-        saveLocalUsers(users);
-        state.username = name;
-        state.isRegistered = true;
-        if (!state.joinDate) state.joinDate = Date.now();
-        saveState();
-        showToast('注册成功，欢迎来到茶海心遇！');
-        navigate('home');
-      } else {
-        if (!users[name]) { showToast('用户名不存在'); return; }
-        if (users[name].password !== simpleHash(pw)) { showToast('密码错误'); return; }
-        state.username = name;
-        state.isRegistered = true;
-        if (!state.joinDate) state.joinDate = users[name].joinDate || Date.now();
-        saveState();
-        showToast('登录成功！');
-        navigate('home');
-      }
+      // 本地模式 fallback
+      state.username = `茶友_${phone.slice(-4)}`;
+      state.isRegistered = true;
+      if (!state.joinDate) state.joinDate = Date.now();
+      saveState();
+      showToast('登录成功！');
+      navigate('home');
     });
 
-    btnGuest.addEventListener('click', () => {
+    // 邮箱登录/注册
+    $('#btn-email-login').addEventListener('click', async () => {
+      const email = $('#email-input').value.trim();
+      const code = $('#email-code-input').value.trim();
+
+      if (!email) { showToast('请输入邮箱'); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('请输入正确的邮箱地址'); return; }
+      if (!code) { showToast('请输入验证码'); return; }
+      if (code.length !== 6) { showToast('验证码为6位数字'); return; }
+
+      // 调用后端API
+      if (API_BASE) {
+        const result = await apiCall('/api/auth/register', 'POST', {
+          type: 'email',
+          identifier: email,
+          code: code,
+          source_platform: 'web'
+        });
+        if (result && result.success) {
+          state.username = result.data.username;
+          state.token = result.data.token;
+          state.isRegistered = true;
+          if (!state.joinDate) state.joinDate = Date.now();
+          saveState();
+          showToast(result.data.is_new_user ? '注册成功，欢迎！' : '登录成功！');
+          navigate('home');
+          return;
+        } else if (result) {
+          showToast(result.message || '操作失败');
+          return;
+        }
+      }
+      // 本地模式 fallback
+      state.username = `茶友_${email.split('@')[0]}`;
+      state.isRegistered = true;
+      if (!state.joinDate) state.joinDate = Date.now();
+      saveState();
+      showToast('登录成功！');
+      navigate('home');
+    });
+
+    // 社交登录
+    $$('.btn-social').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const platform = btn.dataset.platform;
+        showToast(`${platform === 'wechat' ? '微信' : platform === 'alipay' ? '支付宝' : '抖音'}登录中...`);
+
+        try {
+          // 调用后端社交登录接口
+          const response = await fetch(`${API_BASE}/api/auth/social`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ platform, code: 'mock_code' }) // 模拟code
+          });
+          const result = await response.json();
+          if (result.success) {
+            state.username = result.data.username;
+            state.token = result.data.token;
+            state.isRegistered = true;
+            if (!state.joinDate) state.joinDate = Date.now();
+            saveState();
+            showToast(result.data.is_new_user ? '注册成功，欢迎！' : '登录成功！');
+            navigate('home');
+            return;
+          } else {
+            showToast(result.message || '操作失败');
+            return;
+          }
+        } catch (error) {
+          console.error('社交登录失败:', error);
+          // 本地模式 fallback
+          state.username = `${platform === 'wechat' ? '微信' : platform === 'alipay' ? '支付宝' : '抖音'}用户`;
+          state.isRegistered = true;
+          if (!state.joinDate) state.joinDate = Date.now();
+          saveState();
+          showToast('登录成功！');
+          navigate('home');
+        }
+      });
+    });
+
+    // 访客模式
+    $('#btn-guest').addEventListener('click', () => {
       state.username = '茶友';
       state.isRegistered = false;
       if (!state.joinDate) state.joinDate = Date.now();

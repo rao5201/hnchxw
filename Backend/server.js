@@ -1,30 +1,201 @@
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 const twilio = require('twilio');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// 初始化Twilio
-const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN 
-    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN) 
-    : null;
+// 初始化Twilio (仅在配置了有效凭证时)
+let twilioClient = null;
+try {
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && 
+      process.env.TWILIO_ACCOUNT_SID.startsWith('AC')) {
+    twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    console.log('✅ Twilio 初始化成功');
+  } else {
+    console.log('⚠️ Twilio 未配置，短信功能将不可用');
+  }
+} catch (error) {
+  console.error('❌ Twilio 初始化失败:', error.message);
+  twilioClient = null;
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 初始化 Supabase
-// 确保你的 .env 文件里有 SUPABASE_URL 和 SUPABASE_KEY
-// 或者使用下面的默认值（仅用于测试）
-const supabaseUrl = process.env.SUPABASE_URL || 'https://example.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY || '************************************************************************************************************************************************************************************************************************';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// 数据库连接配置
+let cockroachDB = null; // 即时数据
+let tidbCloudDB = null; // 日备份数据（TiDB Cloud替代Supabase）
+let neonDB = null; // 备份数据
+let railwayDB = null; // 临时数据
+
+// 初始化CockroachDB (PostgreSQL)
+try {
+  if (process.env.COCKROACHDB_URL) {
+    cockroachDB = new Pool({
+      connectionString: process.env.COCKROACHDB_URL,
+      ssl: {
+        rejectUnauthorized: false
+      }
+    });
+    console.log('✅ CockroachDB 连接初始化成功');
+  }
+} catch (error) {
+  console.error('❌ CockroachDB 连接初始化失败:', error);
+}
+
+// 初始化TiDB Cloud (MySQL兼容，替代Supabase作为日备份)
+try {
+  if (process.env.TIDB_HOST && process.env.TIDB_USER && process.env.TIDB_PASSWORD) {
+    tidbCloudDB = mysql.createPool({
+      host: process.env.TIDB_HOST,
+      port: process.env.TIDB_PORT || 4000,
+      user: process.env.TIDB_USER,
+      password: process.env.TIDB_PASSWORD,
+      database: process.env.TIDB_DATABASE || 'test',
+      ssl: {
+        rejectUnauthorized: false
+      }
+    });
+    console.log('✅ TiDB Cloud 连接初始化成功');
+  }
+} catch (error) {
+  console.error('❌ TiDB Cloud 连接初始化失败:', error);
+}
+
+// 初始化Neon (PostgreSQL)
+try {
+  if (process.env.NEON_URL) {
+    neonDB = new Pool({
+      connectionString: process.env.NEON_URL,
+      ssl: {
+        rejectUnauthorized: false
+      }
+    });
+    console.log('✅ Neon 连接初始化成功');
+  }
+} catch (error) {
+  console.error('❌ Neon 连接初始化失败:', error);
+}
+
+// 初始化Railway (PostgreSQL)
+try {
+  if (process.env.RAILWAY_URL) {
+    railwayDB = new Pool({
+      connectionString: process.env.RAILWAY_URL,
+      ssl: {
+        rejectUnauthorized: false
+      }
+    });
+    console.log('✅ Railway 连接初始化成功');
+  }
+} catch (error) {
+  console.error('❌ Railway 连接初始化失败:', error);
+}
+
+// 初始化邮件服务 (用于发送验证码)
+let emailTransporter = null;
+try {
+  if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+    emailTransporter = nodemailer.createTransport({
+      service: process.env.EMAIL_SERVICE, // 如 'QQ', '163', 'Gmail' 等
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD
+      }
+    });
+    console.log('✅ 邮件服务初始化成功');
+  } else {
+    console.log('⚠️ 邮件服务未配置，验证码功能将使用内存存储');
+  }
+} catch (error) {
+  console.error('❌ 邮件服务初始化失败:', error.message);
+  emailTransporter = null;
+}
+
+// 数据库操作封装
+const db = {
+  // 即时数据操作 (CockroachDB)
+  async instantQuery(query, params) {
+    if (!cockroachDB) {
+      console.warn('⚠️ CockroachDB 未连接，使用备用数据库');
+      return this.backupQuery(query, params);
+    }
+    try {
+      const client = await cockroachDB.connect();
+      const result = await client.query(query, params);
+      client.release();
+      return result;
+    } catch (error) {
+      console.error('CockroachDB 查询失败:', error);
+      return this.backupQuery(query, params);
+    }
+  },
+  
+  // 备份数据操作 (Neon)
+  async backupQuery(query, params) {
+    if (!neonDB) {
+      console.warn('⚠️ Neon 未连接，使用临时数据库');
+      return this.tempQuery(query, params);
+    }
+    try {
+      const client = await neonDB.connect();
+      const result = await client.query(query, params);
+      client.release();
+      return result;
+    } catch (error) {
+      console.error('Neon 查询失败:', error);
+      return this.tempQuery(query, params);
+    }
+  },
+  
+  // 临时数据操作 (Railway)
+  async tempQuery(query, params) {
+    if (!railwayDB) {
+      console.warn('⚠️ Railway 未连接，使用内存存储');
+      return { rows: [] };
+    }
+    try {
+      const client = await railwayDB.connect();
+      const result = await client.query(query, params);
+      client.release();
+      return result;
+    } catch (error) {
+      console.error('Railway 查询失败:', error);
+      return { rows: [] };
+    }
+  },
+  
+  // 日备份操作 (TiDB Cloud替代Supabase)
+  async dailyBackup(data) {
+    if (!tidbCloudDB) {
+      console.warn('⚠️ TiDB Cloud 未连接，跳过备份');
+      return false;
+    }
+    try {
+      // 使用TiDB Cloud存储日备份数据
+      const [result] = await tidbCloudDB.execute(
+        `INSERT INTO daily_backups (action, user_id, platform, timestamp, created_at) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [data.action, data.user_id, data.platform || null, data.timestamp, new Date().toISOString()]
+      );
+      
+      console.log('📅 执行日备份:', data);
+      return true;
+    } catch (error) {
+      console.error('TiDB Cloud 备份失败:', error);
+      return false;
+    }
+  }
+};
 
 // --- 内存级风控记录 (重启后重置，生产环境建议用 Redis) ---
 // 格式: { "192.168.1.1": { count: 1, firstTime: 171234567890 } }
 const IPRegistry = {};
 
-// --- 核心接口：统一认证中心 (支持手机号/第三方) ---
+// --- 核心接口：统一认证中心 (支持手机号/第三方) ---  
 app.post('/api/auth/register', async (req, res) => {
     const { type, identifier, code, source_platform } = req.body;
     const clientIP = req.ip || req.connection.remoteAddress;
@@ -77,47 +248,67 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // 3. 数据库查重与自动注册 (策略4 & 5)
-    // 我们查询 Supabase，看这个标识符（手机号/邮箱/第三方ID）是否存在
-    let { data: user, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq(type === 'phone' ? 'phone' : (type === 'email' ? 'email' : 'union_id'), identifier)
-        .single();
-
+    let user = null;
     let isNew = false;
 
-    if (!user) {
-        // --- 新用户：自动创建 ---
-        const newUser = {
-            username: `茶友_${Math.floor(Math.random() * 10000)}`, // 随机昵称
-            phone: type === 'phone' ? identifier : null,
-            email: type === 'email' ? identifier : null,
-            union_id: ['wechat', 'alipay', 'douyin', 'kuaishou', 'xiaohongshu', 'taobao', 'pdd', 'jd'].includes(type) ? identifier : null,
-            source_platform: source_platform || type,
-            is_auto_generated: true,
-            created_at: new Date().toISOString()
-        };
-
-        const { data: createdUser, error: insertError } = await supabase
-            .from('users')
-            .insert([newUser])
-            .select()
-            .single();
-
-        if (insertError) {
-            console.error("注册失败:", insertError);
-            // 如果数据库操作失败，使用内存存储作为 fallback
-            return res.status(500).json({ success: false, message: "注册失败，数据库连接异常" });
+    try {
+        // 查询用户是否存在
+        let query = '';
+        let params = [];
+        
+        if (type === 'phone') {
+            query = 'SELECT * FROM users WHERE phone = $1';
+            params = [identifier];
+        } else if (type === 'email') {
+            query = 'SELECT * FROM users WHERE email = $1';
+            params = [identifier];
+        } else {
+            query = 'SELECT * FROM users WHERE union_id = $1';
+            params = [identifier];
         }
-        
-        user = createdUser;
-        isNew = true;
-        
-        // 只有新用户才增加 IP 计数 (老用户登录不算)
-        ipRecord.count += 1;
-        console.log(`🆕 [新用户注册] ID=${user.id}, 来源=${type}`);
-    } else {
-        console.log(`✅ [老用户登录] ID=${user.id}, 来源=${type}`);
+
+        const result = await db.instantQuery(query, params);
+        user = result.rows[0];
+
+        if (!user) {
+            // --- 新用户：自动创建 ---
+            const insertQuery = `
+                INSERT INTO users (username, phone, email, union_id, source_platform, is_auto_generated, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING *
+            `;
+            
+            const insertParams = [
+                `茶友_${Math.floor(Math.random() * 10000)}`, // 随机昵称
+                type === 'phone' ? identifier : null,
+                type === 'email' ? identifier : null,
+                ['wechat', 'alipay', 'douyin', 'kuaishou', 'xiaohongshu', 'taobao', 'pdd', 'jd'].includes(type) ? identifier : null,
+                source_platform || type,
+                true,
+                new Date().toISOString()
+            ];
+
+            const insertResult = await db.instantQuery(insertQuery, insertParams);
+            user = insertResult.rows[0];
+            isNew = true;
+            
+            // 只有新用户才增加 IP 计数 (老用户登录不算)
+            ipRecord.count += 1;
+            console.log(`🆕 [新用户注册] ID=${user.id}, 来源=${type}`);
+
+            // 执行日备份
+            await db.dailyBackup({
+                action: 'user_register',
+                user_id: user.id,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            console.log(`✅ [老用户登录] ID=${user.id}, 来源=${type}`);
+        }
+    } catch (error) {
+        console.error("注册失败:", error);
+        // 如果数据库操作失败，使用内存存储作为 fallback
+        return res.status(500).json({ success: false, message: "注册失败，数据库连接异常" });
     }
 
     // 4. 返回 Token (策略6: 方便管理)
@@ -165,9 +356,9 @@ app.post('/api/auth/send-sms', async (req, res) => {
     }
 
     // 3. 生成验证码
-    const code = '888888'; // 测试环境固定验证码
+    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 生成6位随机验证码
 
-    // 4. 发送短信
+    // 4. 发送短信（如果Twilio可用）
     if (twilioClient && process.env.TWILIO_PHONE_NUMBER) {
         try {
             await twilioClient.messages.create({
@@ -180,6 +371,9 @@ app.post('/api/auth/send-sms', async (req, res) => {
             console.error("短信发送失败:", error);
             // 短信发送失败不影响流程，返回成功
         }
+    } else {
+        // 如果Twilio不可用，提示用户使用邮箱验证
+        console.log(`⚠️ [短信服务不可用] Phone=${phone}, 建议使用邮箱验证`);
     }
 
     // 5. 增加IP计数
@@ -188,7 +382,7 @@ app.post('/api/auth/send-sms', async (req, res) => {
     // 6. 返回成功
     res.json({
         success: true,
-        message: "验证码已发送",
+        message: twilioClient ? "验证码已发送" : "短信服务暂不可用，请使用邮箱验证",
         code: code // 测试环境返回验证码
     });
 });
@@ -226,11 +420,36 @@ app.post('/api/auth/send-email', async (req, res) => {
     }
 
     // 3. 生成验证码
-    const code = '888888'; // 测试环境固定验证码
+    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 生成6位随机验证码
 
-    // 4. 模拟发送邮件
-    console.log(`📧 [邮件发送] Email=${email}, Code=${code}`);
-    // 实际项目中可以使用Nodemailer发送邮件
+    // 4. 发送邮件（如果邮件服务可用）
+    if (emailTransporter) {
+        try {
+            await emailTransporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: email,
+                subject: '茶海心遇 - 邮箱验证码',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <h2 style="color: #6c5ce7;">茶海心遇 - 邮箱验证</h2>
+                        <p>您好！</p>
+                        <p>您的验证码是：<strong style="font-size: 24px; color: #6c5ce7;">${code}</strong></p>
+                        <p>验证码有效期为10分钟，请尽快使用。</p>
+                        <p>如果这不是您的操作，请忽略此邮件。</p>
+                        <br>
+                        <p>茶海心遇团队</p>
+                    </div>
+                `
+            });
+            console.log(`✅ [邮件发送成功] Email=${email}, Code=${code}`);
+        } catch (error) {
+            console.error("邮件发送失败:", error);
+            return res.status(500).json({ success: false, message: "邮件发送失败，请稍后重试" });
+        }
+    } else {
+        // 如果邮件服务不可用，仅记录日志
+        console.log(`⚠️ [邮件服务不可用] Email=${email}, Code=${code}`);
+    }
 
     // 5. 增加IP计数
     ipRecord.count += 1;
@@ -238,12 +457,12 @@ app.post('/api/auth/send-email', async (req, res) => {
     // 6. 返回成功
     res.json({
         success: true,
-        message: "验证码已发送",
+        message: emailTransporter ? "验证码已发送到您的邮箱" : "邮件服务暂不可用，验证码已生成",
         code: code // 测试环境返回验证码
     });
 });
 
-// --- 社交登录接口 (占位) ---
+// --- 社交登录接口 (占位) ---  
 app.post('/api/auth/social', async (req, res) => {
     const { platform, code } = req.body;
     const clientIP = req.ip || req.connection.remoteAddress;
@@ -281,41 +500,50 @@ app.post('/api/auth/social', async (req, res) => {
     const unionId = `${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     // 4. 数据库查重与自动注册
-    let { data: user, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('union_id', unionId)
-        .single();
-
+    let user = null;
     let isNew = false;
 
-    if (!user) {
-        // 新用户
-        const newUser = {
-            username: `${platform === 'wechat' ? '微信' : platform === 'alipay' ? '支付宝' : platform === 'douyin' ? '抖音' : '社交'}用户_${Math.floor(Math.random() * 10000)}`,
-            union_id: unionId,
-            source_platform: platform,
-            is_auto_generated: true,
-            created_at: new Date().toISOString()
-        };
+    try {
+        // 查询用户是否存在
+        const query = 'SELECT * FROM users WHERE union_id = $1';
+        const result = await db.instantQuery(query, [unionId]);
+        user = result.rows[0];
 
-        const { data: createdUser, error: insertError } = await supabase
-            .from('users')
-            .insert([newUser])
-            .select()
-            .single();
+        if (!user) {
+            // 新用户
+            const insertQuery = `
+                INSERT INTO users (username, union_id, source_platform, is_auto_generated, created_at)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING *
+            `;
+            
+            const insertParams = [
+                `${platform === 'wechat' ? '微信' : platform === 'alipay' ? '支付宝' : platform === 'douyin' ? '抖音' : '社交'}用户_${Math.floor(Math.random() * 10000)}`,
+                unionId,
+                platform,
+                true,
+                new Date().toISOString()
+            ];
 
-        if (insertError) {
-            console.error("注册失败:", insertError);
-            return res.status(500).json({ success: false, message: "注册失败，数据库连接异常" });
+            const insertResult = await db.instantQuery(insertQuery, insertParams);
+            user = insertResult.rows[0];
+            isNew = true;
+            ipRecord.count += 1;
+            console.log(`🆕 [新用户注册] ID=${user.id}, 来源=${platform}`);
+
+            // 执行日备份
+            await db.dailyBackup({
+                action: 'social_login_register',
+                user_id: user.id,
+                platform: platform,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            console.log(`✅ [老用户登录] ID=${user.id}, 来源=${platform}`);
         }
-        
-        user = createdUser;
-        isNew = true;
-        ipRecord.count += 1;
-        console.log(`🆕 [新用户注册] ID=${user.id}, 来源=${platform}`);
-    } else {
-        console.log(`✅ [老用户登录] ID=${user.id}, 来源=${platform}`);
+    } catch (error) {
+        console.error("注册失败:", error);
+        return res.status(500).json({ success: false, message: "注册失败，数据库连接异常" });
     }
 
     // 5. 返回 Token

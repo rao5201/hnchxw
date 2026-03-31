@@ -1,0 +1,33 @@
+{
+  "startTime": "2026-03-31T06:09:56.678Z",
+  "endTime": "2026-03-31T06:09:56.732Z",
+  "totalTests": 4,
+  "passedTests": 2,
+  "failedTests": 2,
+  "testCases": [
+    {
+      "name": "网站注册功能",
+      "status": "failed",
+      "message": "发送邮箱验证码失败: undefined",
+      "error": "Error: 发送邮箱验证码失败: undefined\n    at testWebsiteRegistration (C:\\Users\\Lenovo\\Desktop\\海南茶海虾王管理有限责任公司官方网站\\MyWebsite宣传总网站\\hnchxw\\tests\\test-suite.js:118:15)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async C:\\Users\\Lenovo\\Desktop\\海南茶海虾王管理有限责任公司官方网站\\MyWebsite宣传总网站\\hnchxw\\tests\\test-suite.js:85:28"
+    },
+    {
+      "name": "聊天功能",
+      "status": "passed",
+      "message": "聊天功能开发中，接口尚未实现",
+      "data": null
+    },
+    {
+      "name": "分享功能",
+      "status": "passed",
+      "message": "分享功能开发中，接口尚未实现",
+      "data": null
+    },
+    {
+      "name": "管理员功能",
+      "status": "failed",
+      "message": "管理员登录失败: undefined",
+      "error": "Error: 管理员登录失败: undefined\n    at testAdminFunctionality (C:\\Users\\Lenovo\\Desktop\\海南茶海虾王管理有限责任公司官方网站\\MyWebsite宣传总网站\\hnchxw\\tests\\test-suite.js:219:15)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async C:\\Users\\Lenovo\\Desktop\\海南茶海虾王管理有限责任公司官方网站\\MyWebsite宣传总网站\\hnchxw\\tests\\test-suite.js:85:28"
+    }
+  ]
+}
